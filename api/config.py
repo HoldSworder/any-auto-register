@@ -13,7 +13,7 @@ CONFIG_KEYS = [
     "moemail_api_url",
     "mail_provider",
     "cfworker_api_url", "cfworker_admin_token", "cfworker_domain", "cfworker_fingerprint",
-    "luckmail_base_url", "luckmail_api_key", "luckmail_email_type", "luckmail_domain",
+    "luckmail_base_url", "luckmail_api_key", "luckmail_email_type", "luckmail_domain", "luckmail_mode",
     "cpa_api_url", "cpa_api_key",
     "team_manager_url", "team_manager_key",
     "cliproxyapi_management_key",

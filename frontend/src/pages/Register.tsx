@@ -52,6 +52,7 @@ export default function Register() {
         cfworker_fingerprint: cfg.cfworker_fingerprint || '',
         luckmail_base_url: cfg.luckmail_base_url || 'https://mails.luckyous.com/',
         luckmail_api_key: cfg.luckmail_api_key || '',
+        luckmail_mode: cfg.luckmail_mode || 'auto',
         luckmail_email_type: cfg.luckmail_email_type || '',
         luckmail_domain: cfg.luckmail_domain || '',
       })
@@ -90,6 +91,7 @@ export default function Register() {
           cfworker_fingerprint: values.cfworker_fingerprint,
           luckmail_base_url: values.luckmail_base_url,
           luckmail_api_key: values.luckmail_api_key,
+          luckmail_mode: values.luckmail_mode,
           luckmail_email_type: values.luckmail_email_type,
           luckmail_domain: values.luckmail_domain,
           yescaptcha_key: values.yescaptcha_key,
@@ -237,8 +239,17 @@ export default function Register() {
               <Form.Item name="luckmail_api_key" label="API Key">
                 <Input.Password placeholder="ak_..." />
               </Form.Item>
+              <Form.Item name="luckmail_mode" label="邮箱模式">
+                <Select
+                  options={[
+                    { value: 'auto', label: '自动（ChatGPT=购买，其他=接码）' },
+                    { value: 'purchase', label: '强制购买邮箱' },
+                    { value: 'order', label: '强制订单接码' },
+                  ]}
+                />
+              </Form.Item>
               <Form.Item name="luckmail_email_type" label="邮箱类型（可选）">
-                <Input placeholder="ms_graph / ms_imap" />
+                <Input placeholder="ms_graph / ms_imap（留空=自动）" />
               </Form.Item>
               <Form.Item name="luckmail_domain" label="邮箱域名（可选）">
                 <Input placeholder="outlook.com" />

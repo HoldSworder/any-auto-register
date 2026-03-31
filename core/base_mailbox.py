@@ -127,6 +127,7 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
             project_code=extra.get("luckmail_project_code", ""),
             email_type=extra.get("luckmail_email_type", ""),
             domain=extra.get("luckmail_domain", ""),
+            mode=extra.get("luckmail_mode", ""),
         )
     else:  # laoudo
         return LaoudoMailbox(
@@ -627,7 +628,7 @@ class LuckMailMailbox(BaseMailbox):
 
     def __init__(self, base_url: str, api_key: str,
                  project_code: str = "", email_type: str = "",
-                 domain: str = ""):
+                 domain: str = "", mode: str = ""):
         if not base_url or not api_key:
             raise RuntimeError(
                 "LuckMail 未配置：请在全局设置中填写 luckmail_base_url 和 luckmail_api_key"
@@ -640,6 +641,7 @@ class LuckMailMailbox(BaseMailbox):
         self._project_code = project_code
         self._email_type = email_type or None
         self._domain = domain or None
+        self._mode = str(mode or "").strip().lower()
         self._order_no = None
         self._token = None
         self._email = None
@@ -649,6 +651,10 @@ class LuckMailMailbox(BaseMailbox):
             return True
         if self._token:
             return True
+        if self._mode in ("purchase", "buy", "purchased"):
+            return True
+        if self._mode in ("order", "sms", "code"):
+            return False
         return self._project_code == "openai"
 
     def _resolve_token(self, account: MailboxAccount = None) -> str:
@@ -705,19 +711,52 @@ class LuckMailMailbox(BaseMailbox):
             raise RuntimeError("LuckMail 未设置 project_code，无法创建邮箱")
 
         if self._use_purchase_mode():
+            request_email_type = self._email_type
+            if request_email_type:
+                try:
+                    projects = self._client.user.get_projects(page=1, page_size=500)
+                    project = next(
+                        (p for p in (projects.list or []) if p.code == self._project_code),
+                        None,
+                    )
+                    supported_types = set(project.email_types or []) if project else set()
+                    if supported_types and request_email_type not in supported_types:
+                        self._log(
+                            f"[LuckMail] 当前项目({self._project_code})不支持 email_type={request_email_type}，"
+                            f"将自动回退为平台默认类型（支持: {', '.join(sorted(supported_types))}）"
+                        )
+                        request_email_type = None
+                except Exception as e:
+                    self._log(f"[LuckMail] 预检查项目邮箱类型失败，继续尝试下单: {e}")
+
             self._log(
                 f"[LuckMail] 分支: ChatGPT + LuckMail -> 购买邮箱接口 "
-                f"(project_code={self._project_code}, email_type={self._email_type or '-'}, domain={self._domain or '-'})"
+                f"(project_code={self._project_code}, email_type={request_email_type or '-'}, domain={self._domain or '-'})"
             )
             try:
                 result = self._client.user.purchase_emails(
                     project_code=self._project_code,
                     quantity=1,
-                    email_type=self._email_type,
+                    email_type=request_email_type,
                     domain=self._domain,
                 )
             except Exception as e:
-                raise RuntimeError(f"LuckMail 购买邮箱失败: {e}") from e
+                err_text = str(e)
+                if request_email_type and "不支持邮箱类型" in err_text:
+                    self._log(
+                        f"[LuckMail] email_type={request_email_type} 不受支持，自动重试（不传 email_type）"
+                    )
+                    try:
+                        result = self._client.user.purchase_emails(
+                            project_code=self._project_code,
+                            quantity=1,
+                            email_type=None,
+                            domain=self._domain,
+                        )
+                    except Exception as e2:
+                        raise RuntimeError(f"LuckMail 购买邮箱失败: {e2}") from e2
+                else:
+                    raise RuntimeError(f"LuckMail 购买邮箱失败: {e}") from e
 
             purchases = (result or {}).get("purchases") or []
             if not purchases:
