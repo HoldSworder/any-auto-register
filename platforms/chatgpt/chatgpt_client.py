@@ -1031,6 +1031,7 @@ class ChatGPTClient:
         register_submitted = False
         otp_verified = False
         account_created = False
+        otp_sent_at = None
         seen_states = {}
 
         for _ in range(12):
@@ -1052,6 +1053,7 @@ class ChatGPTClient:
                 if not success:
                     return False, f"注册失败: {msg}"
                 register_submitted = True
+                otp_sent_at = time.time()
                 if not self.send_email_otp():
                     self._log("发送验证码接口返回失败，继续等待邮箱中的验证码...")
                 state = self._state_from_url(f"{self.AUTH}/email-verification")
@@ -1059,16 +1061,38 @@ class ChatGPTClient:
 
             if self._state_is_email_otp(state):
                 self._log("等待邮箱验证码...")
-                otp_code = skymail_client.wait_for_verification_code(email, timeout=30)
-                if not otp_code:
-                    return False, "未收到验证码"
+                otp_max_attempts = 3
+                otp_last_error = "验证码失败"
+                for otp_attempt in range(otp_max_attempts):
+                    if otp_attempt > 0:
+                        self._log(f"OTP 重新尝试 {otp_attempt + 1}/{otp_max_attempts}...")
+                        otp_sent_at = time.time()
+                        self.send_email_otp()
 
-                success, next_state = self.verify_email_otp(otp_code, return_state=True)
-                if not success:
-                    return False, f"验证码失败: {next_state}"
-                otp_verified = True
-                state = next_state
-                self.last_registration_state = state
+                    otp_code = skymail_client.wait_for_verification_code(
+                        email,
+                        timeout=30,
+                        otp_sent_at=otp_sent_at,
+                    )
+                    if not otp_code:
+                        otp_last_error = "未收到验证码"
+                        continue
+
+                    success, next_state = self.verify_email_otp(otp_code, return_state=True)
+                    if success:
+                        otp_verified = True
+                        state = next_state
+                        self.last_registration_state = state
+                        break
+
+                    otp_last_error = str(next_state)
+                    if "wrong_email_otp_code" in otp_last_error or "HTTP 401" in otp_last_error:
+                        self._log("检测到 OTP 无效，准备请求新验证码后重试")
+                        continue
+                    return False, f"验证码失败: {otp_last_error}"
+
+                if not otp_verified:
+                    return False, f"验证码失败: {otp_last_error}"
                 continue
 
             if self._state_is_about_you(state):
