@@ -128,6 +128,7 @@ def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'Bas
             api_key=extra.get("maliapi_api_key", ""),
             domain=extra.get("maliapi_domain", ""),
             auto_domain_strategy=extra.get("maliapi_auto_domain_strategy", ""),
+            preferred_domains=extra.get("maliapi_preferred_domains", ""),
             proxy=proxy,
         )
     elif provider == "cfworker":
@@ -599,12 +600,16 @@ class DuckMailMailbox(BaseMailbox):
 class MaliAPIMailbox(BaseMailbox):
     """YYDS Mail / MaliAPI 临时邮箱服务"""
 
+    _domain_counter = 0
+    _domain_counter_lock = __import__("threading").Lock()
+
     def __init__(
         self,
         api_url: str = "https://maliapi.215.im/v1",
         api_key: str = "",
         domain: str = "",
         auto_domain_strategy: str = "",
+        preferred_domains: str = "",
         proxy: str = None,
     ):
         self.api = (api_url or "https://maliapi.215.im/v1").rstrip("/")
@@ -614,31 +619,49 @@ class MaliAPIMailbox(BaseMailbox):
         self.proxy = {"http": proxy, "https": proxy} if proxy else None
         self._email = None
         self._temp_token = None
+        self._preferred_domains: set[str] = set()
+        self._available_domains_cache: list[str] = []
+        raw = str(preferred_domains or "").strip()
+        if raw:
+            for item in raw.replace("\n", ",").split(","):
+                d = item.strip()
+                if d:
+                    self._preferred_domains.add(d)
 
     def _headers(self, bearer: str = "") -> dict[str, str]:
         headers = {
             "accept": "application/json",
             "content-type": "application/json",
         }
-        if self.api_key:
-            headers["X-API-Key"] = self.api_key
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
+        elif self.api_key:
+            headers["X-API-Key"] = self.api_key
         return headers
 
     def _request(self, method: str, path: str, *, json_body: dict = None,
-                 params: dict = None, bearer: str = "") -> Any:
-        import requests
+                 params: dict = None, bearer: str = "",
+                 _retry_on_429: int = 2) -> Any:
+        import requests as _requests
+        import time as _time
 
-        response = requests.request(
-            method,
-            f"{self.api}{path}",
-            headers=self._headers(bearer),
-            json=json_body,
-            params=params,
-            proxies=self.proxy,
-            timeout=15,
-        )
+        for attempt in range(_retry_on_429 + 1):
+            response = _requests.request(
+                method,
+                f"{self.api}{path}",
+                headers=self._headers(bearer),
+                json=json_body,
+                params=params,
+                proxies=self.proxy,
+                timeout=15,
+            )
+            if response.status_code == 429 and attempt < _retry_on_429:
+                retry_after = int(response.headers.get("Retry-After", "3"))
+                self._log(f"[MaliAPI] 429 限流，{retry_after}s 后重试 ({attempt + 1}/{_retry_on_429})")
+                _time.sleep(retry_after)
+                continue
+            break
+
         try:
             payload = response.json()
         except Exception:
@@ -669,26 +692,78 @@ class MaliAPIMailbox(BaseMailbox):
         if not self.api_key:
             raise RuntimeError("MaliAPI 未配置：请在全局设置中填写 maliapi_api_key")
 
+    def _get_temp_token(self, account: MailboxAccount) -> str:
+        """从 account 中提取 tempToken，用于消息查询鉴权"""
+        extra = account.extra or {}
+        return str(extra.get("temp_token") or account.account_id or "").strip()
+
     def _list_messages(self, account: MailboxAccount) -> list[dict]:
-        data = self._request("GET", "/messages", params={"address": account.email})
+        token = self._get_temp_token(account)
+        if token:
+            data = self._request("GET", "/messages", bearer=token)
+        else:
+            data = self._request("GET", "/messages", params={"address": account.email})
         if isinstance(data, dict):
             messages = data.get("messages", [])
         else:
             messages = data
         return [item for item in (messages or []) if isinstance(item, dict)]
 
-    def _get_message_detail(self, message_id: str) -> dict:
-        data = self._request("GET", f"/messages/{message_id}")
+    def _get_message_detail(self, message_id: str, account: MailboxAccount = None) -> dict:
+        token = self._get_temp_token(account) if account else ""
+        if token:
+            data = self._request("GET", f"/messages/{message_id}", bearer=token)
+        else:
+            params = {"address": account.email} if account else None
+            data = self._request("GET", f"/messages/{message_id}", params=params)
         if isinstance(data, dict) and isinstance(data.get("message"), dict):
             return data["message"]
         return data if isinstance(data, dict) else {}
 
+    def _fetch_available_domains(self) -> list[str]:
+        """从 /v1/domains 获取可用域名列表（带缓存）"""
+        if self._available_domains_cache:
+            return self._available_domains_cache
+        try:
+            data = self._request("GET", "/domains")
+            domains = data if isinstance(data, list) else []
+            names = []
+            for d in domains:
+                if isinstance(d, str):
+                    names.append(d)
+                elif isinstance(d, dict):
+                    name = str(d.get("domain") or d.get("name") or "").strip()
+                    if name:
+                        names.append(name)
+            if names:
+                self._available_domains_cache = names
+            return names
+        except Exception as e:
+            self._log(f"[MaliAPI] 获取域名列表失败: {e}")
+            return []
+
+    def _pick_domain(self) -> str:
+        """从偏好白名单中轮询选择域名，确保并发时均匀分布。"""
+        if self._preferred_domains:
+            available = self._fetch_available_domains()
+            filtered = sorted(d for d in available if d in self._preferred_domains)
+            if filtered:
+                with MaliAPIMailbox._domain_counter_lock:
+                    idx = MaliAPIMailbox._domain_counter % len(filtered)
+                    MaliAPIMailbox._domain_counter += 1
+                chosen = filtered[idx]
+                self._log(f"[MaliAPI] 从偏好域名白名单选择: {chosen}")
+                return chosen
+            self._log(f"[MaliAPI] 偏好域名 {self._preferred_domains} 均不在可用列表中，回退默认")
+        return self.domain
+
     def get_email(self) -> MailboxAccount:
         self._ensure_api_key()
         body = {}
-        if self.domain:
-            body["domain"] = self.domain
-        if self.auto_domain_strategy:
+        selected_domain = self._pick_domain()
+        if selected_domain:
+            body["domain"] = selected_domain
+        if self.auto_domain_strategy and not selected_domain:
             body["autoDomainStrategy"] = self.auto_domain_strategy
 
         data = self._request("POST", "/accounts", json_body=body)
@@ -730,48 +805,122 @@ class MaliAPIMailbox(BaseMailbox):
         except Exception:
             return set()
 
+    def _try_extract_code_from_messages(self, account: MailboxAccount, seen: set,
+                                        keyword: str, code_pattern: str) -> str | None:
+        """从消息列表中提取验证码，返回 code 或 None。"""
+        import re
+        for message in self._list_messages(account):
+            message_id = str(message.get("id") or "").strip()
+            if not message_id or message_id in seen:
+                continue
+            seen.add(message_id)
+
+            try:
+                detail = self._get_message_detail(message_id, account)
+            except Exception:
+                detail = message
+
+            search_text = " ".join([
+                str(detail.get("subject") or message.get("subject") or ""),
+                str(detail.get("text") or ""),
+                str(detail.get("html") or ""),
+                str(message.get("subject") or ""),
+                str(message.get("snippet") or ""),
+            ]).strip()
+            search_text = self._decode_raw_content(search_text) or search_text
+            search_text = re.sub(
+                r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+                "",
+                search_text,
+            )
+            if keyword and keyword.lower() not in search_text.lower():
+                continue
+
+            code = self._safe_extract(search_text, code_pattern)
+            if code:
+                self._log(f"[MaliAPI] 收到验证码: {code}")
+                return code
+        return None
+
+    def _wait_for_code_ws(self, account: MailboxAccount, keyword: str,
+                          timeout: int, seen: set, code_pattern: str) -> str | None:
+        """通过 WebSocket 实时等待新邮件通知，收到后拉取验证码。"""
+        import time
+        try:
+            import websocket
+        except ImportError:
+            return None
+
+        token = self._get_temp_token(account)
+        if not token:
+            return None
+
+        try:
+            ticket_data = self._request("GET", "/auth/ws-ticket", bearer=token)
+            ticket = ticket_data if isinstance(ticket_data, str) else (
+                ticket_data.get("ticket") if isinstance(ticket_data, dict) else None
+            )
+            if not ticket:
+                return None
+        except Exception:
+            return None
+
+        ws_url = self.api.replace("https://", "wss://").replace("http://", "ws://")
+        ws_url = f"{ws_url}/ws?token={ticket}"
+        self._log("[MaliAPI] WebSocket 实时等待邮件...")
+
+        got_signal = False
+        start = time.time()
+
+        def on_message(ws, msg):
+            nonlocal got_signal
+            got_signal = True
+            ws.close()
+
+        def on_error(ws, err):
+            ws.close()
+
+        ws = websocket.WebSocketApp(ws_url, on_message=on_message, on_error=on_error)
+        import threading
+        wst = threading.Thread(target=ws.run_forever, kwargs={"ping_interval": 20}, daemon=True)
+        wst.start()
+
+        remaining = timeout - (time.time() - start)
+        wst.join(timeout=max(1, remaining))
+
+        if not wst.is_alive():
+            pass
+        else:
+            ws.close()
+
+        if got_signal or True:
+            code = self._try_extract_code_from_messages(account, seen, keyword, code_pattern)
+            if code:
+                return code
+        return None
+
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
                       timeout: int = 120, before_ids: set = None,
                       code_pattern: str = None, **kwargs) -> str:
-        import re
         import time
 
         self._ensure_api_key()
         seen = {str(mid) for mid in (before_ids or set())}
         start = time.time()
+
+        code = self._try_extract_code_from_messages(account, seen, keyword, code_pattern)
+        if code:
+            return code
+
+        ws_code = self._wait_for_code_ws(account, keyword, timeout, seen, code_pattern)
+        if ws_code:
+            return ws_code
+
         while time.time() - start < timeout:
             try:
-                for message in self._list_messages(account):
-                    message_id = str(message.get("id") or "").strip()
-                    if not message_id or message_id in seen:
-                        continue
-                    seen.add(message_id)
-
-                    try:
-                        detail = self._get_message_detail(message_id)
-                    except Exception:
-                        detail = message
-
-                    search_text = " ".join([
-                        str(detail.get("subject") or message.get("subject") or ""),
-                        str(detail.get("text") or ""),
-                        str(detail.get("html") or ""),
-                        str(message.get("subject") or ""),
-                        str(message.get("snippet") or ""),
-                    ]).strip()
-                    search_text = self._decode_raw_content(search_text) or search_text
-                    search_text = re.sub(
-                        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-                        "",
-                        search_text,
-                    )
-                    if keyword and keyword.lower() not in search_text.lower():
-                        continue
-
-                    code = self._safe_extract(search_text, code_pattern)
-                    if code:
-                        self._log(f"[MaliAPI] 收到验证码: {code}")
-                        return code
+                code = self._try_extract_code_from_messages(account, seen, keyword, code_pattern)
+                if code:
+                    return code
             except Exception:
                 pass
             time.sleep(3)

@@ -280,7 +280,7 @@ class OAuthPkceClient:
 
     def login_after_register(
         self, email: str, password: str, otp_code: str = ""
-    ) -> OAuthStart:
+    ) -> tuple["OAuthStart", str]:
         """
         注册完成后重走 OAuth 登录流程。
 
@@ -288,7 +288,9 @@ class OAuthPkceClient:
         OAuth 登录获取 oai-client-auth-session Cookie。
 
         Returns:
-            登录阶段的 OAuthStart（含 code_verifier 等，用于步骤 12 Token 交换）。
+            (login_oauth, post_login_continue_url):
+            - login_oauth: 登录阶段 OAuthStart（含 code_verifier 等）
+            - post_login_continue_url: 登录完成后的 continue_url（可能为空）
         """
         self._log("=" * 40)
         self._log("开始 OAuth 登录（获取 workspace）...")
@@ -322,6 +324,7 @@ class OAuthPkceClient:
 
         page_type = (login_email_resp.json().get("page") or {}).get("type", "")
         self._log(f"登录页面类型: {page_type}")
+        last_resp_data = login_email_resp.json()
 
         # 9-4. 提交密码（login_password 页面）
         if "password" in page_type:
@@ -339,7 +342,8 @@ class OAuthPkceClient:
             )
             if pwd_resp.status_code != 200:
                 raise RuntimeError(f"登录密码验证失败: HTTP {pwd_resp.status_code}")
-            page_type = (pwd_resp.json().get("page") or {}).get("type", "")
+            last_resp_data = pwd_resp.json()
+            page_type = (last_resp_data.get("page") or {}).get("type", "")
             self._log(f"密码验证后页面类型: {page_type}")
 
         # 9-5. 二次 OTP（复用注册阶段验证码）
@@ -347,7 +351,6 @@ class OAuthPkceClient:
             if not otp_code:
                 raise RuntimeError("登录需要二次 OTP 验证，但未提供验证码")
             self._log(f"提交登录二次验证码: {otp_code}")
-            # 触发发信请求以满足后端状态机（可忽略报错）
             try:
                 self.session.post(
                     f"{AUTH_BASE}/api/accounts/passwordless/send-otp",
@@ -374,22 +377,61 @@ class OAuthPkceClient:
             )
             if otp_resp.status_code != 200:
                 raise RuntimeError(f"登录二次 OTP 失败: HTTP {otp_resp.status_code} {otp_resp.text[:200]}")
+            last_resp_data = otp_resp.json() if otp_resp.text.strip() else {}
             self._log("登录二次验证通过")
 
+        # 9-6. 登录完成后推进状态机，获取 continue_url
+        post_login_url = str(last_resp_data.get("continue_url") or "").strip()
+        post_login_page = str((last_resp_data.get("page") or {}).get("type") or "").strip()
+        self._log(f"登录最终响应: page={post_login_page}, has_continue_url={bool(post_login_url)}")
+
+        if not post_login_url:
+            self._log("尝试推进授权状态（带 sentinel）...")
+            try:
+                advance_resp = self.session.post(
+                    f"{AUTH_BASE}/api/accounts/authorize/continue",
+                    headers={
+                        "referer": f"{AUTH_BASE}/",
+                        "accept": "application/json",
+                        "content-type": "application/json",
+                        "openai-sentinel-token": login_sentinel,
+                    },
+                    data="{}",
+                    timeout=30,
+                )
+                advance_data = advance_resp.json() if advance_resp.status_code == 200 else {}
+                advance_page = str((advance_data.get("page") or {}).get("type") or "").strip()
+                post_login_url = str(advance_data.get("continue_url") or "").strip()
+                self._log(f"推进结果: page={advance_page}, has_continue_url={bool(post_login_url)}")
+
+                if not post_login_url and "workspace" in advance_page:
+                    workspaces = (advance_data.get("page") or {}).get("workspaces") or []
+                    if workspaces:
+                        wid = str((workspaces[0] or {}).get("id") or "").strip()
+                        if wid:
+                            self._log(f"从推进响应获取 workspace_id: {wid}")
+                            post_login_url = self.select_workspace(wid)
+            except Exception as e:
+                self._log(f"推进授权状态异常: {e}")
+
         self._log("OAuth 登录流程完成")
-        return login_oauth
+        return login_oauth, post_login_url
 
     # ══════════════════════════════════════════════════════════════════
     # 步骤 10：解析 workspace_id
     # ══════════════════════════════════════════════════════════════════
 
     def extract_workspace_id(self) -> str:
-        """从 oai-client-auth-session Cookie（JWT）中解析 workspace_id。"""
+        """从 oai-client-auth-session Cookie（JWT）中解析 workspace_id。
+
+        新注册账户的 cookie 可能尚未包含 workspaces 字段，
+        此时返回空字符串而非抛异常，由调用方决定后续流程。
+        """
         auth_cookie = self.session.cookies.get("oai-client-auth-session") or ""
         if not auth_cookie:
-            raise RuntimeError("未找到 oai-client-auth-session Cookie")
+            self._log("未找到 oai-client-auth-session Cookie，跳过 workspace 解析")
+            return ""
 
-        # JWT 段遍历（workspace 可能在第一段或第二段）
         segments = auth_cookie.split(".")
         for i in range(min(len(segments), 2)):
             data = _decode_jwt_segment(segments[i])
@@ -400,10 +442,47 @@ class OAuthPkceClient:
                     self._log(f"成功解析 workspace_id: {wid}")
                     return wid
 
-        # 调试信息
         first_data = _decode_jwt_segment(segments[0]) if segments else {}
-        self._log(f"Cookie 字段: {list(first_data.keys())}")
-        raise RuntimeError("无法从 Cookie 中解析 workspace_id")
+        self._log(f"Cookie 中无 workspaces 字段（新账户），字段: {list(first_data.keys())}")
+        return ""
+
+    def advance_auth_state(self) -> str:
+        """推进授权状态机，返回 continue_url（用于无 workspace 的新账户）。
+
+        登录完成后，调用 authorize/continue 让服务端推进状态，
+        返回的 continue_url 可直接用于重定向链获取 OAuth code。
+        """
+        self._log("调用 authorize/continue 推进授权状态...")
+        resp = self.session.post(
+            f"{AUTH_BASE}/api/accounts/authorize/continue",
+            headers={
+                "referer": f"{AUTH_BASE}/",
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+            data="{}",
+            timeout=30,
+        )
+        data = resp.json() if resp.status_code == 200 else {}
+        self._log(f"authorize/continue 响应: status={resp.status_code}, "
+                   f"page={data.get('page', {}).get('type', 'N/A')}")
+
+        continue_url = str(data.get("continue_url") or "").strip()
+        if continue_url:
+            self._log(f"获取到 continue_url")
+            return continue_url
+
+        page_type = str((data.get("page") or {}).get("type") or "").strip()
+        if "workspace" in page_type:
+            workspaces = (data.get("page") or {}).get("workspaces") or []
+            if workspaces:
+                wid = str((workspaces[0] or {}).get("id") or "").strip()
+                if wid:
+                    self._log(f"从 authorize/continue 获取到 workspace_id: {wid}")
+                    ws_url = self.select_workspace(wid)
+                    return ws_url
+
+        return ""
 
     # ══════════════════════════════════════════════════════════════════
     # 步骤 11：选择 workspace
@@ -441,11 +520,25 @@ class OAuthPkceClient:
         """跟踪重定向链，捕获 code= 回调 URL，交换 access_token。"""
         current_url = continue_url
 
-        for hop in range(8):
+        for hop in range(15):
             resp = self.session.get(current_url, allow_redirects=False, timeout=15)
             location = resp.headers.get("Location") or ""
 
             if resp.status_code not in (301, 302, 303, 307, 308) or not location:
+                self._log(f"重定向链终止: HTTP {resp.status_code}, "
+                           f"has_location={bool(location)}")
+                if resp.status_code == 200 and "code=" in (resp.url or current_url):
+                    self._log("当前 URL 中已包含 code=，尝试从中提取...")
+                    final_url = str(resp.url or current_url)
+                    if "code=" in final_url and "state=" in final_url:
+                        token_json = submit_callback_url(
+                            callback_url=final_url,
+                            expected_state=oauth_start.state,
+                            code_verifier=oauth_start.code_verifier,
+                            redirect_uri=oauth_start.redirect_uri,
+                            proxy_url=self.proxy,
+                        )
+                        return json.loads(token_json)
                 break
 
             next_url = urllib.parse.urljoin(current_url, location)

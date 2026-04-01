@@ -118,8 +118,9 @@ const TAB_ITEMS = [
         fields: [
           { key: 'maliapi_base_url', label: 'API URL', placeholder: 'https://maliapi.215.im/v1' },
           { key: 'maliapi_api_key', label: 'API Key', secret: true },
-          { key: 'maliapi_domain', label: '邮箱域名（可选）', placeholder: 'example.com' },
-          { key: 'maliapi_auto_domain_strategy', label: '自动域名策略', type: 'select' },
+          { key: 'maliapi_domain', label: '固定域名（可选）', placeholder: '指定单一域名，不推荐用于公共域名' },
+          { key: 'maliapi_preferred_domains', label: '偏好域名白名单', placeholder: '逗号分隔，如 uk.dalamud.com,us.dalamud.com' },
+          { key: 'maliapi_auto_domain_strategy', label: '自动域名策略（无偏好域名时生效）', type: 'select' },
         ],
       },
       {
@@ -540,6 +541,173 @@ function CFWorkerDomainPoolSection({ form }: { form: any }) {
   )
 }
 
+function DomainScannerPanel({ form }: { form: ReturnType<typeof Form.useForm>[0] }) {
+  const [scanning, setScanning] = useState(false)
+  const [status, setStatus] = useState<{ state: string; progress: { total: number; done: number; accepted: number; rejected: number; register_failed: number; error: number; phase: string }; logs: string[] } | null>(null)
+  const [results, setResults] = useState<{ domain: string; status: string; error_message: string; fail_step: number; scanned_at: string }[]>([])
+  const [delay, setDelay] = useState(3)
+
+  const pollStatus = async () => {
+    try {
+      const d = await apiFetch('/domain-scanner/status')
+      setStatus(d)
+      if (d.state === 'running') {
+        setScanning(true)
+      } else if (scanning) {
+        setScanning(false)
+        loadResults()
+      }
+    } catch { /* ignore */ }
+  }
+
+  const loadResults = async () => {
+    try {
+      const d = await apiFetch('/domain-scanner/results')
+      setResults(d)
+    } catch { /* ignore */ }
+  }
+
+  useEffect(() => {
+    loadResults()
+    pollStatus()
+    const timer = window.setInterval(pollStatus, 2000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const startScan = async () => {
+    try {
+      const d = await apiFetch('/domain-scanner/scan', {
+        method: 'POST',
+        body: JSON.stringify({ delay }),
+      })
+      if (d.ok) {
+        const msg = d.excluded_count > 0
+          ? `扫描已启动（跳过 ${d.excluded_count} 个已有偏好域名）`
+          : '扫描已启动'
+        message.success(msg)
+        setScanning(true)
+      } else {
+        message.warning(d.message)
+      }
+    } catch (e: any) {
+      message.error(`启动失败: ${e.message}`)
+    }
+  }
+
+  const applyDomains = async () => {
+    try {
+      const d = await apiFetch('/domain-scanner/apply', { method: 'POST' })
+      if (d.ok) {
+        message.success(`已追加 ${d.added} 个域名，白名单共 ${d.total} 个`)
+        form.setFieldsValue({ maliapi_preferred_domains: d.domains.join(',') })
+      } else {
+        message.warning(d.message)
+      }
+    } catch (e: any) {
+      message.error(`应用失败: ${e.message}`)
+    }
+  }
+
+  const accepted = results.filter((r) => r.status === 'accepted')
+  const rejected = results.filter((r) => r.status === 'rejected')
+  const registerFailed = results.filter((r) => r.status === 'register_failed')
+  const progress = status?.progress
+  const phaseLabel = progress?.phase === 'probe' ? '阶段1: 轻量探测' : progress?.phase === 'register' ? '阶段2: 完整注册' : ''
+
+  return (
+    <Card
+      title="域名可用性扫描"
+      extra={<span style={{ fontSize: 12, color: '#7a8ba3' }}>两阶段验证：轻量探测 → 完整注册（自动排除偏好白名单已有域名）</span>}
+      style={{ marginBottom: 16 }}
+    >
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
+        <span style={{ fontSize: 13, color: '#7a8ba3' }}>间隔:</span>
+        <Select
+          value={delay}
+          onChange={setDelay}
+          style={{ width: 100 }}
+          options={[
+            { value: 2, label: '2 秒' },
+            { value: 3, label: '3 秒' },
+            { value: 5, label: '5 秒' },
+            { value: 8, label: '8 秒' },
+          ]}
+        />
+        <Button type="primary" icon={<SyncOutlined spin={scanning} />} onClick={startScan} loading={scanning} disabled={scanning}>
+          {scanning ? '扫描中...' : '开始扫描'}
+        </Button>
+        {accepted.length > 0 && (
+          <Button icon={<CheckCircleOutlined />} onClick={applyDomains}>
+            应用可用域名 ({accepted.length})
+          </Button>
+        )}
+      </div>
+
+      {scanning && progress && progress.total > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', gap: 16, fontSize: 13, color: '#7a8ba3', marginBottom: 4 }}>
+            {phaseLabel && <span style={{ fontWeight: 600, color: '#1677ff' }}>{phaseLabel}</span>}
+            <span>进度: {progress.done}/{progress.total}</span>
+            <span style={{ color: '#52c41a' }}>注册成功: {progress.accepted}</span>
+            <span style={{ color: '#ff4d4f' }}>探测被拒: {progress.rejected}</span>
+            <span style={{ color: '#fa8c16' }}>注册失败: {progress.register_failed}</span>
+          </div>
+          <div style={{ background: '#f0f0f0', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+            <div style={{ background: '#1677ff', height: '100%', width: `${(progress.done / progress.total) * 100}%`, transition: 'width 0.3s' }} />
+          </div>
+        </div>
+      )}
+
+      {scanning && status?.logs && status.logs.length > 0 && (
+        <div style={{ background: '#141414', color: '#d4d4d4', borderRadius: 6, padding: '8px 12px', maxHeight: 200, overflow: 'auto', fontSize: 12, fontFamily: 'monospace', marginBottom: 12 }}>
+          {status.logs.slice(-30).map((line, i) => (
+            <div key={i} style={{ color: line.includes('成功') ? '#52c41a' : line.includes('失败') || line.includes('被拒') ? '#ff4d4f' : line.includes('通过') ? '#52c41a' : '#d4d4d4' }}>{line}</div>
+          ))}
+        </div>
+      )}
+
+      {results.length > 0 && (
+        <div>
+          {accepted.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <Typography.Text strong style={{ fontSize: 13 }}>注册成功（可用）({accepted.length})</Typography.Text>
+              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {accepted.map((r) => <Tag key={r.domain} color="green">{r.domain}</Tag>)}
+              </div>
+            </div>
+          )}
+          {registerFailed.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <Typography.Text strong style={{ fontSize: 13, color: '#fa8c16' }}>探测通过但注册失败 ({registerFailed.length})</Typography.Text>
+              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {registerFailed.map((r) => (
+                  <Tag key={r.domain} color="orange" title={`步骤${r.fail_step}: ${r.error_message}`}>
+                    {r.domain} (步骤{r.fail_step})
+                  </Tag>
+                ))}
+              </div>
+            </div>
+          )}
+          {rejected.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <Typography.Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>探测被拒 ({rejected.length})</Typography.Text>
+              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {rejected.map((r) => <Tag key={r.domain} color="red">{r.domain}</Tag>)}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!scanning && results.length === 0 && (
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          尚未扫描。点击「开始扫描」自动探测所有 YYDS Mail 域名——先轻量探测过滤，再对通过的域名走完整注册流程验证。已在偏好白名单中的域名会自动跳过。
+        </Typography.Text>
+      )}
+    </Card>
+  )
+}
+
 function SolverStatus() {
   const [running, setRunning] = useState<boolean | null>(null)
 
@@ -872,6 +1040,7 @@ export default function Settings() {
                 <ConfigSection key={section.title} section={section} />
               ))}
               {activeTab === 'mailbox' ? <CFWorkerDomainPoolSection form={form} /> : null}
+              {activeTab === 'mailbox' ? <DomainScannerPanel form={form} /> : null}
               <Button type="primary" icon={<SaveOutlined />} onClick={save} loading={saving} block>
                 {saved ? '已保存 ✓' : '保存配置'}
               </Button>

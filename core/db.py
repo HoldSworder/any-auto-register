@@ -61,6 +61,28 @@ class ProxyModel(SQLModel, table=True):
     last_checked: Optional[datetime] = None
 
 
+class ScheduledJobModel(SQLModel, table=True):
+    __tablename__ = "scheduled_jobs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = ""
+    enabled: bool = True
+    job_type: str = "register"    # register / cpa_clean
+    platform: str = "chatgpt"
+    count: int = 1
+    concurrency: int = 1
+    register_delay_seconds: float = 0.0
+    cron_expr: str = ""           # cron 表达式 (min hour day month weekday)
+    interval_minutes: int = 0     # 简单间隔（分钟），0 = 使用 cron
+    last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
+    last_task_id: str = ""
+    last_status: str = ""         # success / failed / running
+    last_logs_json: str = "[]"    # 上次执行的完整日志
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 def save_account(account) -> 'AccountModel':
     """从 base_platform.Account 存入数据库（同平台同邮箱则更新）"""
     with Session(engine) as session:

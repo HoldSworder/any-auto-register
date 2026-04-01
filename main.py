@@ -15,6 +15,8 @@ from api.proxies import router as proxies_router
 from api.config import router as config_router
 from api.actions import router as actions_router
 from api.integrations import router as integrations_router
+from api.domain_scanner import router as domain_scanner_router
+from api.scheduled_jobs import router as scheduled_jobs_router
 
 EXPECTED_CONDA_ENV = os.getenv("APP_CONDA_ENV", "any-auto-register")
 
@@ -85,6 +87,8 @@ app.include_router(proxies_router, prefix="/api")
 app.include_router(config_router, prefix="/api")
 app.include_router(actions_router, prefix="/api")
 app.include_router(integrations_router, prefix="/api")
+app.include_router(domain_scanner_router, prefix="/api")
+app.include_router(scheduled_jobs_router, prefix="/api")
 
 
 @app.get("/api/solver/status")

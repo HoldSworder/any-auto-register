@@ -45,6 +45,7 @@ export default function Register() {
         maliapi_base_url: cfg.maliapi_base_url || 'https://maliapi.215.im/v1',
         maliapi_api_key: cfg.maliapi_api_key || '',
         maliapi_domain: cfg.maliapi_domain || '',
+        maliapi_preferred_domains: cfg.maliapi_preferred_domains || '',
         maliapi_auto_domain_strategy: cfg.maliapi_auto_domain_strategy || 'balanced',
         duckmail_api_url: cfg.duckmail_api_url || '',
         duckmail_provider_url: cfg.duckmail_provider_url || '',
@@ -94,6 +95,7 @@ export default function Register() {
           maliapi_base_url: values.maliapi_base_url,
           maliapi_api_key: values.maliapi_api_key,
           maliapi_domain: values.maliapi_domain,
+          maliapi_preferred_domains: values.maliapi_preferred_domains,
           maliapi_auto_domain_strategy: values.maliapi_auto_domain_strategy,
           moemail_api_url: values.moemail_api_url,
           skymail_api_base: values.skymail_api_base,
@@ -268,10 +270,13 @@ export default function Register() {
               <Form.Item name="maliapi_api_key" label="API Key">
                 <Input.Password placeholder="AC-..." />
               </Form.Item>
-              <Form.Item name="maliapi_domain" label="邮箱域名（可选）">
-                <Input placeholder="example.com" />
+              <Form.Item name="maliapi_domain" label="固定域名（可选）">
+                <Input placeholder="指定单一域名，不推荐用于公共域名" />
               </Form.Item>
-              <Form.Item name="maliapi_auto_domain_strategy" label="自动域名策略">
+              <Form.Item name="maliapi_preferred_domains" label="偏好域名白名单">
+                <Input placeholder="逗号分隔，如 uk.dalamud.com,us.dalamud.com" />
+              </Form.Item>
+              <Form.Item name="maliapi_auto_domain_strategy" label="自动域名策略（无偏好域名时生效）">
                 <Select
                   options={[
                     { value: 'balanced', label: 'balanced' },

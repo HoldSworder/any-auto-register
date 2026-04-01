@@ -48,6 +48,12 @@ class Scheduler:
                 except Exception as e:
                     print(f"[Scheduler] CPA 维护错误: {e}")
 
+            try:
+                from core.scheduled_runner import tick
+                tick()
+            except Exception as e:
+                print(f"[Scheduler] 定时注册任务检查错误: {e}")
+
             time.sleep(self._loop_interval_seconds)
 
     def _get_cpa_maintenance_interval_seconds(self) -> int:

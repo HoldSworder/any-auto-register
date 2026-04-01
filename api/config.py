@@ -5,9 +5,13 @@ from core.config_store import config_store
 router = APIRouter(prefix="/config", tags=["config"])
 
 CONFIG_KEYS = [
+    "mail_provider",
     "laoudo_auth",
     "laoudo_email",
     "laoudo_account_id",
+    "skymail_api_base",
+    "skymail_token",
+    "skymail_domain",
     "yescaptcha_key",
     "twocaptcha_key",
     "default_executor",
@@ -26,6 +30,7 @@ CONFIG_KEYS = [
     "maliapi_api_key",
     "maliapi_domain",
     "maliapi_auto_domain_strategy",
+    "maliapi_preferred_domains",
     "cfworker_api_url",
     "cfworker_admin_token",
     "cfworker_custom_auth",

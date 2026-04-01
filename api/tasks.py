@@ -143,6 +143,15 @@ def _save_task_log(platform: str, email: str, status: str,
         s.commit()
 
 
+def _notify_scheduled_job(task_id: str, success: bool):
+    """通知定时任务模块更新状态。"""
+    try:
+        from core.scheduled_runner import update_job_status
+        update_job_status(task_id, success)
+    except Exception:
+        pass
+
+
 def _auto_upload_integrations(task_id: str, account):
     """注册成功后自动导入外部系统。"""
     try:
@@ -179,7 +188,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
             merged_extra.update({k: v for k, v in req.extra.items() if v is not None and v != ""})
             # 邮箱链路默认不走代理，避免接码服务在代理出口被拦截/限流
             return create_mailbox(
-                provider=merged_extra.get("mail_provider", "laoudo"),
+                provider=merged_extra.get("mail_provider", "moemail"),
                 extra=merged_extra,
                 proxy=None,
             )
@@ -276,6 +285,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
         with _tasks_lock:
             _tasks[task_id]["status"] = "failed"
             _tasks[task_id]["error"] = str(e)
+        _notify_scheduled_job(task_id, False)
         return
 
     with _tasks_lock:
@@ -283,6 +293,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
         _tasks[task_id]["success"] = success
         _tasks[task_id]["errors"] = errors
     _log(task_id, f"完成: 成功 {success} 个, 失败 {len(errors)} 个")
+    _notify_scheduled_job(task_id, success > 0)
     _cleanup_old_tasks()
 
 

@@ -141,7 +141,7 @@ class OAuthPkceRegisterStrategy:
 
         # ── 步骤 10：注册后重新 OAuth 登录 ───────────────────────────────
         log("步骤 10/12: 注册后重新 OAuth 登录...")
-        login_oauth = client.login_after_register(email_addr, password, otp_code)
+        login_oauth, post_login_url = client.login_after_register(email_addr, password, otp_code)
 
         # ── 步骤 11：解析 workspace_id ───────────────────────────────────
         log("步骤 11/12: 解析 workspace_id...")
@@ -149,11 +149,17 @@ class OAuthPkceRegisterStrategy:
         result.workspace_id = workspace_id
 
         # ── 步骤 12：选择 workspace → 交换 Token ─────────────────────────
-        log("步骤 12/12: 选择 workspace...")
-        ws_continue_url = client.select_workspace(workspace_id)
-        
-        log("步骤 12/12: 跟踪重定向链，交换 OAuth Token...")
-        token_data = client.follow_redirects_and_exchange_token(ws_continue_url, login_oauth)
+        if workspace_id:
+            log("步骤 12/12: 选择 workspace...")
+            ws_continue_url = client.select_workspace(workspace_id)
+            log("步骤 12/12: 跟踪重定向链，交换 OAuth Token...")
+            token_data = client.follow_redirects_and_exchange_token(ws_continue_url, login_oauth)
+        elif post_login_url:
+            log("步骤 12/12: 新账户无 workspace，使用登录后 continue_url...")
+            token_data = client.follow_redirects_and_exchange_token(post_login_url, login_oauth)
+        else:
+            log("步骤 12/12: 回退：通过授权 URL 重定向获取 Token...")
+            token_data = client.follow_redirects_and_exchange_token(login_oauth.auth_url, login_oauth)
 
         # ── 组装结果 ─────────────────────────────────────────────────────
         result.success = True

@@ -7,6 +7,7 @@ import {
   GlobalOutlined,
   HistoryOutlined,
   SettingOutlined,
+  ClockCircleOutlined,
   SunOutlined,
   MoonOutlined,
 } from '@ant-design/icons'
@@ -17,6 +18,7 @@ import Register from '@/pages/Register'
 import Proxies from '@/pages/Proxies'
 import Settings from '@/pages/Settings'
 import TaskHistory from '@/pages/TaskHistory'
+import ScheduledJobs from '@/pages/ScheduledJobs'
 import { darkTheme, lightTheme } from './theme'
 
 const { Sider, Content } = Layout
@@ -55,6 +57,7 @@ function AppContent() {
     if (path === '/') return ['/']
     if (path.startsWith('/accounts')) return [path]
     if (path === '/history') return ['/history']
+    if (path === '/scheduled') return ['/scheduled']
     if (path === '/proxies') return ['/proxies']
     if (path === '/settings') return ['/settings']
     return ['/']
@@ -79,6 +82,11 @@ function AppContent() {
       key: '/history',
       icon: <HistoryOutlined />,
       label: '任务历史',
+    },
+    {
+      key: '/scheduled',
+      icon: <ClockCircleOutlined />,
+      label: '定时任务',
     },
     {
       key: '/proxies',
@@ -175,6 +183,7 @@ function AppContent() {
             <Route path="/accounts/:platform" element={<Accounts />} />
             <Route path="/register" element={<Register />} />
             <Route path="/history" element={<TaskHistory />} />
+            <Route path="/scheduled" element={<ScheduledJobs />} />
             <Route path="/proxies" element={<Proxies />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
