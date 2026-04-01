@@ -203,6 +203,11 @@ def get_job_logs(job_id: int):
         except Exception:
             result["logs"] = []
 
+        if job.last_status == "running":
+            result["status"] = "failed"
+            if not result["logs"]:
+                result["logs"] = ["任务状态异常（可能因后端重启丢失），已自动恢复"]
+
         return result
 
 

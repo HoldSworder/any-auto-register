@@ -806,7 +806,8 @@ class MaliAPIMailbox(BaseMailbox):
             return set()
 
     def _try_extract_code_from_messages(self, account: MailboxAccount, seen: set,
-                                        keyword: str, code_pattern: str) -> str | None:
+                                        keyword: str, code_pattern: str,
+                                        exclude_codes: set | None = None) -> str | None:
         """从消息列表中提取验证码，返回 code 或 None。"""
         import re
         for message in self._list_messages(account):
@@ -838,22 +839,24 @@ class MaliAPIMailbox(BaseMailbox):
 
             code = self._safe_extract(search_text, code_pattern)
             if code:
+                if exclude_codes and code in exclude_codes:
+                    self._log(f"[MaliAPI] 跳过已用验证码: {code}")
+                    continue
                 self._log(f"[MaliAPI] 收到验证码: {code}")
                 return code
         return None
 
-    def _wait_for_code_ws(self, account: MailboxAccount, keyword: str,
-                          timeout: int, seen: set, code_pattern: str) -> str | None:
-        """通过 WebSocket 实时等待新邮件通知，收到后拉取验证码。"""
+    def _wait_for_code_ws(self, account: MailboxAccount, timeout: float) -> bool:
+        """通过 WebSocket 等待新邮件信号，返回是否收到。超时快速失败。"""
         import time
         try:
             import websocket
         except ImportError:
-            return None
+            return False
 
         token = self._get_temp_token(account)
         if not token:
-            return None
+            return False
 
         try:
             ticket_data = self._request("GET", "/auth/ws-ticket", bearer=token)
@@ -861,16 +864,15 @@ class MaliAPIMailbox(BaseMailbox):
                 ticket_data.get("ticket") if isinstance(ticket_data, dict) else None
             )
             if not ticket:
-                return None
+                return False
         except Exception:
-            return None
+            return False
 
         ws_url = self.api.replace("https://", "wss://").replace("http://", "ws://")
         ws_url = f"{ws_url}/ws?token={ticket}"
         self._log("[MaliAPI] WebSocket 实时等待邮件...")
 
         got_signal = False
-        start = time.time()
 
         def on_message(ws, msg):
             nonlocal got_signal
@@ -884,20 +886,15 @@ class MaliAPIMailbox(BaseMailbox):
         import threading
         wst = threading.Thread(target=ws.run_forever, kwargs={"ping_interval": 20}, daemon=True)
         wst.start()
+        wst.join(timeout=max(1, timeout))
 
-        remaining = timeout - (time.time() - start)
-        wst.join(timeout=max(1, remaining))
-
-        if not wst.is_alive():
-            pass
-        else:
+        if wst.is_alive():
             ws.close()
+            wst.join(timeout=2)
 
-        if got_signal or True:
-            code = self._try_extract_code_from_messages(account, seen, keyword, code_pattern)
-            if code:
-                return code
-        return None
+        if got_signal:
+            self._log("[MaliAPI] WebSocket 收到新邮件信号")
+        return got_signal
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
                       timeout: int = 120, before_ids: set = None,
@@ -905,25 +902,45 @@ class MaliAPIMailbox(BaseMailbox):
         import time
 
         self._ensure_api_key()
+        exclude_codes = kwargs.get("exclude_codes") or set()
         seen = {str(mid) for mid in (before_ids or set())}
         start = time.time()
 
-        code = self._try_extract_code_from_messages(account, seen, keyword, code_pattern)
-        if code:
-            return code
-
-        ws_code = self._wait_for_code_ws(account, keyword, timeout, seen, code_pattern)
-        if ws_code:
-            return ws_code
+        if not seen:
+            try:
+                seen = self.get_current_ids(account)
+                if seen:
+                    self._log(f"[MaliAPI] 已标记 {len(seen)} 条已有消息")
+            except Exception:
+                pass
 
         while time.time() - start < timeout:
             try:
-                code = self._try_extract_code_from_messages(account, seen, keyword, code_pattern)
+                code = self._try_extract_code_from_messages(
+                    account, seen, keyword, code_pattern, exclude_codes)
                 if code:
                     return code
             except Exception:
                 pass
-            time.sleep(3)
+
+            remaining = timeout - (time.time() - start)
+            if remaining <= 0:
+                break
+
+            ws_wait = min(remaining, 30)
+            got_ws = self._wait_for_code_ws(account, ws_wait)
+
+            if got_ws:
+                try:
+                    code = self._try_extract_code_from_messages(
+                        account, seen, keyword, code_pattern, exclude_codes)
+                    if code:
+                        return code
+                except Exception:
+                    pass
+            else:
+                time.sleep(2)
+
         raise TimeoutError(f"等待验证码超时 ({timeout}s)")
 
 

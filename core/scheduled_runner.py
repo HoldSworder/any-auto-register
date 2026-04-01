@@ -42,8 +42,46 @@ def compute_next_run(job: ScheduledJobModel) -> Optional[datetime]:
     return None
 
 
+def _recover_stuck_jobs():
+    """重启后将卡在 running 但内存中已无对应 task 的 job 恢复为 failed。"""
+    from api.tasks import _tasks, _tasks_lock
+
+    with Session(engine) as s:
+        stuck = s.exec(
+            select(ScheduledJobModel).where(
+                ScheduledJobModel.last_status == "running"
+            )
+        ).all()
+        for job in stuck:
+            task_id = job.last_task_id
+            alive = False
+            if task_id:
+                with _tasks_lock:
+                    alive = task_id in _tasks
+                if not alive:
+                    with _cpa_clean_lock:
+                        alive = task_id in _cpa_clean_tasks
+            if not alive:
+                print(f"[ScheduledRunner] 恢复卡住的任务: job_id={job.id} task_id={task_id}")
+                job.last_status = "failed"
+                job.next_run_at = compute_next_run(job)
+                s.add(job)
+        s.commit()
+
+
+_recovered = False
+
+
 def tick():
     """由 Scheduler 定期调用，检查到期任务并执行。"""
+    global _recovered
+    if not _recovered:
+        _recovered = True
+        try:
+            _recover_stuck_jobs()
+        except Exception as e:
+            print(f"[ScheduledRunner] 恢复卡住任务失败: {e}")
+
     now = datetime.now(timezone.utc)
 
     with Session(engine) as s:
@@ -57,6 +95,20 @@ def tick():
 
         for job in jobs:
             if job.last_status == "running":
+                task_id = job.last_task_id
+                still_alive = False
+                if task_id:
+                    from api.tasks import _tasks, _tasks_lock
+                    with _tasks_lock:
+                        still_alive = task_id in _tasks
+                    if not still_alive:
+                        with _cpa_clean_lock:
+                            still_alive = task_id in _cpa_clean_tasks
+                if not still_alive:
+                    job.last_status = "failed"
+                    job.next_run_at = compute_next_run(job)
+                    s.add(job)
+                    s.commit()
                 continue
             try:
                 task_id = _dispatch_job(job)

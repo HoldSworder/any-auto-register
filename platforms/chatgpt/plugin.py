@@ -60,6 +60,7 @@ class ChatGPTPlatform(BasePlatform):
                 def __init__(self):
                     self._acct = None
                     self._email = _fixed_email
+                    self._before_ids: set = set()
 
                 def create_email(self, config=None):
                     if self._email and self._acct and _fixed_email:
@@ -69,6 +70,10 @@ class ChatGPTPlatform(BasePlatform):
                         self._email = self._acct.email
                     elif not _fixed_email:
                         self._email = self._acct.email
+                    try:
+                        self._before_ids = _mailbox.get_current_ids(self._acct)
+                    except Exception:
+                        self._before_ids = set()
                     return {"email": self._email, "service_id": self._acct.account_id, "token": ""}
 
                 def get_verification_code(
@@ -86,6 +91,7 @@ class ChatGPTPlatform(BasePlatform):
                         self._acct,
                         keyword="",
                         timeout=timeout,
+                        before_ids=self._before_ids,
                         otp_sent_at=otp_sent_at,
                         exclude_codes=exclude_codes,
                     )
