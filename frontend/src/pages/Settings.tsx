@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { App, Card, Form, Input, Select, Button, message, Tabs, Space, Tag, Typography, Modal, QRCode, Switch } from 'antd'
+import { App, Card, Form, Input, Select, Button, message, Tabs, Space, Tag, Typography, Modal, QRCode, Switch, Alert } from 'antd'
 import {
   SaveOutlined,
   EyeOutlined,
@@ -821,6 +821,74 @@ function IntegrationsPanel() {
   )
 }
 
+function OutlookImportSection() {
+  const { message: msg } = App.useApp()
+  const [value, setValue] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<any | null>(null)
+
+  const handleSubmit = async () => {
+    const payload = String(value || '').trim()
+    if (!payload) {
+      msg.error('请输入 Outlook 账号内容')
+      return
+    }
+    setLoading(true)
+    try {
+      const res = await apiFetch('/outlook/batch-import', {
+        method: 'POST',
+        body: JSON.stringify({ data: payload, enabled: true }),
+      })
+      setResult(res)
+      msg.success(`导入完成：成功 ${res.success} / 失败 ${res.failed}`)
+    } catch (e: any) {
+      msg.error(e?.message || '导入失败')
+      setResult({ error: e?.message || String(e) })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Card
+      title="Outlook 批量导入"
+      extra={<span style={{ fontSize: 12, color: '#7a8ba3' }}>每行格式：邮箱----密码 或 邮箱----密码----client_id----refresh_token</span>}
+      style={{ marginBottom: 16 }}
+    >
+      <Input.TextArea
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={`example@outlook.com----password\nexample@outlook.com----password----client_id----refresh_token`}
+        autoSize={{ minRows: 6, maxRows: 14 }}
+      />
+      <Space style={{ marginTop: 12 }}>
+        <Button type="primary" loading={loading} onClick={handleSubmit}>
+          导入
+        </Button>
+        <Button onClick={() => { setValue(''); setResult(null) }}>
+          清空
+        </Button>
+      </Space>
+      {result ? (
+        <div style={{ marginTop: 12 }}>
+          {'success' in result ? (
+            <Alert
+              type={result.failed ? 'warning' : 'success'}
+              showIcon
+              message={`导入完成：成功 ${result.success} / 失败 ${result.failed}`}
+              description={result.errors && result.errors.length ? (
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{result.errors.join('\n')}</pre>
+              ) : undefined}
+            />
+          ) : (
+            <Alert type="error" showIcon message="导入失败" description={String(result.error || '')} />
+          )}
+        </div>
+      ) : null}
+    </Card>
+  )
+}
+
 type TotpSetupState = 'idle' | 'setup'
 
 function SecurityPanel() {
@@ -1169,6 +1237,7 @@ export default function Settings() {
                 <ConfigSection key={section.title} section={section} />
               ))}
               {activeTab === 'mailbox' ? <CFWorkerDomainPoolSection form={form} /> : null}
+              {activeTab === 'mailbox' ? <OutlookImportSection /> : null}
               <Button type="primary" icon={<SaveOutlined />} onClick={save} loading={saving} block>
                 {saved ? '已保存 ✓' : '保存配置'}
               </Button>

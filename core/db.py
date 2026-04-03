@@ -49,6 +49,20 @@ class TaskLog(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class OutlookAccountModel(SQLModel, table=True):
+    __tablename__ = "outlook_accounts"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(index=True, sa_column_kwargs={"unique": True})
+    password: str
+    client_id: str = ""
+    refresh_token: str = ""
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+    last_used: Optional[datetime] = None
+
+
 class ProxyModel(SQLModel, table=True):
     __tablename__ = "proxies"
 
