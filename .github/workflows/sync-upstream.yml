@@ -1,0 +1,64 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync with upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/zc-zhangchen/any-auto-register.git
+          git fetch upstream main
+
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          FORK_SHA=$(git rev-parse HEAD)
+
+          if [ "$UPSTREAM_SHA" = "$FORK_SHA" ]; then
+            echo "✅ Already up to date"
+            exit 0
+          fi
+
+          echo "🔄 Upstream: $UPSTREAM_SHA"
+          echo "🔄 Fork:     $FORK_SHA"
+
+          git checkout main
+
+          # Reset to upstream, then re-apply our workflows
+          git reset --hard upstream/main
+
+          # Ensure our CI workflows exist
+          mkdir -p .github/workflows
+
+          # Restore workflow files from the previous commit if upstream removed them
+          git checkout HEAD -- .github/workflows/docker-publish.yml 2>/dev/null || true
+          git checkout HEAD -- .github/workflows/sync-upstream.yml 2>/dev/null || true
+
+          # If workflows were removed by upstream reset, re-fetch from our branch
+          if [ ! -f .github/workflows/docker-publish.yml ] || [ ! -f .github/workflows/sync-upstream.yml ]; then
+            git checkout origin/main -- .github/workflows/ 2>/dev/null || true
+          fi
+
+          # Check if there are workflow changes to commit
+          if ! git diff --cached --quiet 2>/dev/null || ! git diff --quiet 2>/dev/null; then
+            git add .github/workflows/
+            git commit -m "ci: preserve CI/CD workflows after upstream sync" || true
+          fi
+
+          git push origin main --force
+          echo "✅ Synced to upstream ($UPSTREAM_SHA)"
