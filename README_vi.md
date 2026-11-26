@@ -68,7 +68,7 @@ Cảm ơn những người bạn và đối tác đã hỗ trợ any-auto-regist
 
 | Logo | Tên | Giới thiệu | Website |
 | --- | --- | --- | --- |
-| <a href="https://www.ipwo.net/?ref=githubanyautoregister" target="_blank"><img src="frontend/public/ipwo.png" alt="IPWO" width="140" /></a> | IPWO | Proxy dân cư IPWO phù hợp cho tự động hóa trình duyệt, truy cập mạng đa khu vực, thu thập dữ liệu và kiểm thử nghiệp vụ trực tuyến.<br><br>Với những dự án như any-auto-register có liên quan đến tự động hóa trình duyệt, quản lý nhóm proxy và chạy trên nhiều môi trường, proxy dân cư IPWO có thể dùng để cấu hình môi trường mạng cho từng phiên trình duyệt, hỗ trợ đổi IP linh hoạt và chọn khu vực, mang lại cách tiếp cận proxy thuận tiện hơn cho các tác vụ tự động.<br><br>Cung cấp tài nguyên IP động và tĩnh tại hơn 195 khu vực, hỗ trợ giao thức http/https/socks5, dùng thử miễn phí.<br><br>**Mã giảm giá độc quyền: 0204 (giảm 10%)** | [https://www.ipwo.net/?ref=githubanyautoregister](https://www.ipwo.net/?ref=githubanyautoregister) |
+| <a href="https://www.ipipgo.com?inviteLink=umVuBvLV" target="_blank"><img src="docs/images/ipipgo.png" alt="IPIPGO" width="200" /></a> | IPIPGO | IPIPGO - Nhà cung cấp dịch vụ proxy IP toàn cầu với hơn 90 triệu IP sạch. Dịch vụ bao gồm IP động và tĩnh, SERP API và thu thập dữ liệu web. Đăng ký để được hỗ trợ kỹ thuật chuyên nghiệp 24/7. | [IPIPGO](https://www.ipipgo.com?inviteLink=umVuBvLV) |
 
 ## Xem trước giao diện
 

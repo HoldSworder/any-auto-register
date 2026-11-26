@@ -68,7 +68,7 @@ Thank you to the following friends and partners for supporting any-auto-register
 
 | Logo | Name | Description | Website |
 | --- | --- | --- | --- |
-| <a href="https://www.ipwo.net/?ref=githubanyautoregister" target="_blank"><img src="frontend/public/ipwo.png" alt="IPWO" width="140" /></a> | IPWO | IPWO residential proxies fit browser automation, multi-region network access, data collection, and online business testing.<br><br>For projects like any-auto-register that involve browser automation, proxy pool management, and multi-environment execution, IPWO residential proxies can configure the network environment of different browser sessions, support flexible IP rotation and region selection, and provide a more convenient way to plug proxies into automated tasks.<br><br>195+ regions of rotating and static IP resources, http/https/socks5 supported, free trial available.<br><br>**Exclusive discount code: 0204 (10% off)** | [https://www.ipwo.net/?ref=githubanyautoregister](https://www.ipwo.net/?ref=githubanyautoregister) |
+| <a href="https://www.ipipgo.com?inviteLink=umVuBvLV" target="_blank"><img src="docs/images/ipipgo.png" alt="IPIPGO" width="200" /></a> | IPIPGO | IPIPGO - Global proxy IP provider with 90 million+ clean IPs. Services include rotating and static IPs, a SERP API, and web scraping. Sign up for 24/7 professional technical support. | [IPIPGO](https://www.ipipgo.com?inviteLink=umVuBvLV) |
 
 ## UI Preview
 

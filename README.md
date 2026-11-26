@@ -75,7 +75,7 @@
 
 | Logo | 名称 | 介绍 | 官网 |
 | --- | --- | --- | --- |
-| <a href="https://www.ipwo.net/?ref=githubanyautoregister" target="_blank"><img src="frontend/public/ipwo.png" alt="IPWO" width="140" /></a> | IPWO | IPWO 住宅代理适用于浏览器自动化、多地区网络访问、数据采集及在线业务测试等场景。<br><br>对于 any-auto-register 这类涉及浏览器自动化、代理池管理和多环境运行的项目，IPWO 住宅代理可用于配置不同浏览器会话的网络环境，支持灵活的 IP 切换与地区选择，为自动化任务提供更加便捷的代理接入方式。<br><br>提供 195+ 地区动静态 IP 资源，支持 http/https/socks5 协议，免费测试。<br><br>**专属优惠码：0204（优惠 10%）** | [https://www.ipwo.net/?ref=githubanyautoregister](https://www.ipwo.net/?ref=githubanyautoregister) |
+| <a href="https://www.ipipgo.com?inviteLink=umVuBvLV" target="_blank"><img src="docs/images/ipipgo.png" alt="IPIPGO" width="200" /></a> | IPIPGO | IPIPGO - 全球代理IP服务商，9000W+纯净IP。业务包含：动态/静态IP、SERP API，爬虫，注册立享7×24小时专业技术支持。 | [IPIPGO](https://www.ipipgo.com?inviteLink=umVuBvLV) |
 
 ## 界面预览
 
